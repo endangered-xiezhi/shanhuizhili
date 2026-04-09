@@ -72,7 +72,7 @@ export const PersonnelMatrix: React.FC = () => {
           <p className="text-mck-navy/60 mt-1">管理“三会”成员任期、独立性及关联关系声明</p>
         </div>
         <button 
-          onClick={() => { setIsEditing(true); setCurrentPerson({ organization: "董事会", isIndependent: false }); }}
+          onClick={() => { setIsEditing(true); setCurrentPerson({ organization: "董事会", isIndependent: false, conflictOfInterest: [], role: "董事" }); }}
           className="flex items-center gap-2 px-6 py-2 bg-mck-blue text-white text-xs font-bold uppercase tracking-widest hover:bg-mck-navy transition-all"
         >
           <UserPlus size={16} />
@@ -162,6 +162,21 @@ export const PersonnelMatrix: React.FC = () => {
                     className="w-full border border-mck-border px-4 py-2 text-sm focus:outline-none focus:border-mck-blue"
                   />
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-mck-navy/40">关联公司 (多个请用逗号分隔)</label>
+                <input 
+                  type="text" 
+                  value={(currentPerson.conflictOfInterest || []).join(", ")} 
+                  onChange={e => {
+                    const value = e.target.value;
+                    const companies = value.split(/[,，]/).map(s => s.trim()).filter(s => s.length > 0);
+                    setCurrentPerson({...currentPerson, conflictOfInterest: companies});
+                  }}
+                  className="w-full border border-mck-border px-4 py-2 text-sm focus:outline-none focus:border-mck-blue"
+                  placeholder="例如：关联公司A, 关联公司B"
+                />
               </div>
 
               <div className="flex justify-end gap-4 pt-4">
