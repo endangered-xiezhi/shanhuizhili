@@ -1,7 +1,25 @@
 import React, { useState, useEffect } from "react";
-import { Users, UserPlus, Search, Trash2, Edit3, ShieldCheck, ShieldAlert, Calendar, Save, X, Filter } from "lucide-react";
+import { Users, UserPlus, Search, Trash2, Edit3, ShieldCheck, ShieldAlert, Calendar, Save, X, Filter, AlertTriangle, Clock } from "lucide-react";
 import { Personnel } from "../types";
 import { cn } from "@/src/lib/utils";
+
+// 任期预警工具函数
+const getTermStatus = (termEnd: string): { status: 'normal' | 'warning' | 'expired'; daysRemaining: number; label: string } => {
+  if (!termEnd) return { status: 'normal', daysRemaining: Infinity, label: '无固定期限' };
+  
+  const endDate = new Date(termEnd);
+  const today = new Date();
+  const diffTime = endDate.getTime() - today.getTime();
+  const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  
+  if (daysRemaining < 0) {
+    return { status: 'expired', daysRemaining, label: `已过期 ${Math.abs(daysRemaining)} 天` };
+  } else if (daysRemaining <= 90) {
+    return { status: 'warning', daysRemaining, label: `剩余 ${daysRemaining} 天` };
+  } else {
+    return { status: 'normal', daysRemaining, label: `剩余 ${daysRemaining} 天` };
+  }
+};
 
 const initialPersonnel: Personnel[] = [
   { id: "p1", name: "张明德", role: "董事长", organization: "董事会", termStart: "2024-01-01", termEnd: "2027-01-01", isIndependent: false, conflictOfInterest: ["关联公司A"], status: "在职" },
@@ -289,14 +307,37 @@ export const PersonnelMatrix: React.FC = () => {
             </div>
 
             <div className="space-y-3 pt-4 border-t border-mck-border">
-              <div className="flex items-center justify-between text-[10px] uppercase tracking-widest">
-                <span className="text-mck-navy/40">任期状态</span>
-                <span className="font-bold text-green-600">正常</span>
-              </div>
-              <div className="flex items-center gap-2 text-[10px] text-mck-navy/60">
-                <Calendar size={12} />
-                <span>{p.termStart} 至 {p.termEnd || "至今"}</span>
-              </div>
+              {(() => {
+                const termStatus = getTermStatus(p.termEnd);
+                return (
+                  <>
+                    <div className="flex items-center justify-between text-[10px] uppercase tracking-widest">
+                      <span className="text-mck-navy/40">任期状态</span>
+                      <span className={cn(
+                        "font-bold",
+                        termStatus.status === 'expired' && "text-red-600",
+                        termStatus.status === 'warning' && "text-amber-600",
+                        termStatus.status === 'normal' && "text-green-600"
+                      )}>
+                        {termStatus.status === 'expired' ? '已过期' : termStatus.status === 'warning' ? '即将到期' : '正常'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px] text-mck-navy/60">
+                      <Calendar size={12} />
+                      <span>{p.termStart} 至 {p.termEnd || "至今"}</span>
+                    </div>
+                    {termStatus.status !== 'normal' && (
+                      <div className={cn(
+                        "flex items-center gap-2 text-[10px] font-bold",
+                        termStatus.status === 'expired' ? "text-red-600" : "text-amber-600"
+                      )}>
+                        <AlertTriangle size={12} />
+                        <span>{termStatus.label}</span>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               {p.conflictOfInterest.length > 0 ? (
                 <div className="flex items-center gap-2 text-[10px] text-mck-red font-bold">
                   <ShieldAlert size={12} />
@@ -336,14 +377,60 @@ export const PersonnelMatrix: React.FC = () => {
         
         <div className="mck-card mck-card-accent-red bg-white">
           <h3 className="text-xs font-bold uppercase tracking-widest text-mck-navy/40 mb-4">任期预警</h3>
-          <div className="space-y-4">
-            <div className="flex items-center gap-3 p-3 bg-red-50 border-l-4 border-red-500">
-              <Calendar size={18} className="text-red-600" />
-              <div>
-                <p className="text-xs font-bold text-red-800">暂无任期到期预警</p>
-                <p className="text-[10px] text-red-600">所有成员任期均在有效期内。</p>
-              </div>
-            </div>
+          <div className="space-y-3 max-h-48 overflow-y-auto">
+            {(() => {
+              const warningPersonnel = personnel
+                .map(p => ({ ...p, termStatus: getTermStatus(p.termEnd) }))
+                .filter(p => p.termStatus.status !== 'normal')
+                .sort((a, b) => a.termStatus.daysRemaining - b.termStatus.daysRemaining);
+              
+              if (warningPersonnel.length === 0) {
+                return (
+                  <div className="flex items-center gap-3 p-3 bg-green-50 border-l-4 border-green-500">
+                    <ShieldCheck size={18} className="text-green-600" />
+                    <div>
+                      <p className="text-xs font-bold text-green-800">暂无任期到期预警</p>
+                      <p className="text-[10px] text-green-600">所有成员任期均在有效期内。</p>
+                    </div>
+                  </div>
+                );
+              }
+              
+              return warningPersonnel.map(p => (
+                <div 
+                  key={p.id} 
+                  className={cn(
+                    "flex items-center gap-3 p-3 border-l-4",
+                    p.termStatus.status === 'expired' 
+                      ? "bg-red-50 border-red-500" 
+                      : "bg-amber-50 border-amber-500"
+                  )}
+                >
+                  {p.termStatus.status === 'expired' ? (
+                    <AlertTriangle size={18} className="text-red-600" />
+                  ) : (
+                    <Clock size={18} className="text-amber-600" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className={cn(
+                        "text-xs font-bold truncate",
+                        p.termStatus.status === 'expired' ? "text-red-800" : "text-amber-800"
+                      )}>
+                        {p.name}
+                      </p>
+                      <span className="text-[9px] text-mck-navy/40">{p.role}</span>
+                    </div>
+                    <p className={cn(
+                      "text-[10px]",
+                      p.termStatus.status === 'expired' ? "text-red-600" : "text-amber-600"
+                    )}>
+                      {p.termStatus.label}
+                    </p>
+                  </div>
+                </div>
+              ));
+            })()}
           </div>
         </div>
       </div>
