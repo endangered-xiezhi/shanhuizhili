@@ -53,28 +53,63 @@ export const KnowledgeBase: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.endsWith(".docx")) {
-      alert("仅支持 .docx 格式的 Word 文档。");
+    // 检查文件格式
+    const allowedTypes = [".txt", ".docx"];
+    const fileExt = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
+    
+    if (!allowedTypes.includes(fileExt)) {
+      alert("仅支持 .txt 和 .docx 格式的文件。");
       return;
     }
 
     setIsUploading(true);
+    
     try {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const arrayBuffer = event.target?.result as ArrayBuffer;
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        setCurrentItem(prev => ({
-          ...prev,
-          title: prev.title || file.name.replace(".docx", ""),
-          content: result.value
-        }));
-        setIsUploading(false);
-      };
-      reader.readAsArrayBuffer(file);
+      // 创建FormData对象
+      const formData = new FormData();
+      formData.append("file", file);
+      
+      // 发送到服务器
+      const response = await fetch("/api/knowledge/upload", {
+        method: "POST",
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "上传失败");
+      }
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        // 将服务器返回的数据添加到列表
+        const newItem: KnowledgeItem = {
+          id: result.data.id,
+          title: result.data.title,
+          category: result.data.category,
+          content: result.data.content,
+          lastModified: result.data.lastModified,
+          status: result.data.status,
+          filePath: result.data.filePath,
+          fileName: result.data.fileName
+        };
+        
+        setItems([newItem, ...items]);
+        
+        // 清空文件输入
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
+        
+        alert("文件上传成功！");
+      } else {
+        throw new Error(result.message || "上传失败");
+      }
     } catch (error) {
-      console.error("Word 解析失败:", error);
-      alert("文档解析失败，请检查文件格式。");
+      console.error("上传失败:", error);
+      alert(`上传失败: ${error instanceof Error ? error.message : "未知错误"}`);
+    } finally {
       setIsUploading(false);
     }
   };
@@ -149,7 +184,7 @@ export const KnowledgeBase: React.FC = () => {
                     type="file" 
                     ref={fileInputRef} 
                     onChange={handleFileUpload} 
-                    accept=".docx" 
+                    accept=".txt,.docx" 
                     className="hidden" 
                   />
                 </div>

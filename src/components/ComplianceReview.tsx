@@ -1,19 +1,20 @@
-import React, { useState, useEffect } from "react";
-import { ShieldCheck, Search, BookOpen, AlertTriangle, CheckCircle2, ArrowRight, Brain, RefreshCw, FileCheck } from "lucide-react";
-import { ComplianceIssue, LegalArticle } from "../types";
+import React, { useState, useEffect, useRef } from "react";
+import { ShieldCheck, Upload, FileText, Brain, AlertTriangle, CheckCircle2, X, Loader2, Clock, ChevronDown, ChevronRight, Maximize2, Minimize2 } from "lucide-react";
+import { ComplianceIssue } from "../types";
 import { cn } from "@/src/lib/utils";
+import { motion, AnimatePresence } from "framer-motion";
 
-const mockIssues: ComplianceIssue[] = [
-  { id: "1", type: "程序性", title: "股东大会通知时间不足", description: "根据新公司法，临时股东大会应提前15日通知，当前仅提前11日。", lawReference: "《公司法》第111条", severity: "high", status: "待处理" },
-  { id: "2", type: "实质性", title: "关联交易表决回避风险", description: "议案三涉及大股东资产注入，关联董事未在预审阶段明确回避意向。", lawReference: "《上市规则》第6.3条", severity: "medium", status: "待处理" },
-  { id: "3", type: "程序性", title: "独董出席人数比例", description: "董事会应至少有1/3独立董事出席，当前确认出席人数仅达标，无缓冲余量。", lawReference: "《独董管理办法》第18条", severity: "medium", status: "已修正" },
-];
-
-const mockLaws: LegalArticle[] = [
-  { id: "L1", title: "《中华人民共和国公司法》(2024修订)", content: "第一百一十一条：董事会会议，应于会议召开十日前通知全体董事和监事...", source: "全国人大常委会", updateDate: "2024-01-01" },
-  { id: "L2", title: "《上市公司独立董事管理办法》", content: "第十八条：独立董事应当亲自出席董事会会议。因故不能亲自出席的，应当审慎选择并书面委托其他独立董事代为出席...", source: "证监会", updateDate: "2023-08-01" },
-  { id: "L3", title: "《国有企业公司治理准则》", content: "第四十二条：重大决策事项应当经集体讨论决定，严禁个人或少数人擅自决定...", source: "国资委", updateDate: "2022-12-15" },
-];
+interface ReviewRecord {
+  id: string;
+  fileName: string;
+  fileType: string;
+  uploadTime: string;
+  status: "pending" | "analyzing" | "completed" | "error";
+  content?: string;
+  aiResponse?: string;
+  aiThinking?: string;
+  riskAlerts?: string[];
+}
 
 interface ComplianceReviewProps {
   meetingId?: string | null;
@@ -21,199 +22,544 @@ interface ComplianceReviewProps {
 }
 
 export const ComplianceReview: React.FC<ComplianceReviewProps> = ({ meetingId, onGenerateDocuments }) => {
-  const [issues, setIssues] = useState<ComplianceIssue[]>([]);
-  const [activeIssue, setActiveIssue] = useState<ComplianceIssue | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [records, setRecords] = useState<ReviewRecord[]>(() => {
+    const saved = localStorage.getItem("corporate_compliance_records");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [activeRecord, setActiveRecord] = useState<ReviewRecord | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [showThinking, setShowThinking] = useState(true);
+  const [expandedPanel, setExpandedPanel] = useState<"none" | "content" | "result">("none");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem("corporate_compliance_issues");
-    const allIssues: ComplianceIssue[] = saved ? JSON.parse(saved) : mockIssues;
-    const filtered = meetingId ? allIssues.filter(i => i.meetingId === meetingId) : allIssues;
-    setIssues(filtered);
-    setActiveIssue(filtered[0] || null);
-  }, [meetingId]);
+    localStorage.setItem("corporate_compliance_records", JSON.stringify(records));
+  }, [records]);
 
-  const handleGenerate = () => {
-    if (!meetingId || !onGenerateDocuments) return;
-    setIsGenerating(true);
-    
-    // Simulate document generation
-    setTimeout(() => {
-      const newDoc = {
-        id: `doc-${Date.now()}`,
-        meetingId,
-        title: "会议决议公告 (AI 生成)",
-        type: "决议公告",
-        date: new Date().toISOString().split('T')[0],
-        status: "草稿"
-      };
-      const savedDocs = localStorage.getItem("corporate_generated_documents");
-      const allDocs = savedDocs ? JSON.parse(savedDocs) : [];
-      localStorage.setItem("corporate_generated_documents", JSON.stringify([...allDocs, newDoc]));
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setUploadError(null);
+    setUploadProgress(0);
+
+    try {
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => Math.min(prev + 15, 90));
+      }, 100);
+
+      const text = await file.text();
       
-      setIsGenerating(false);
-      onGenerateDocuments(meetingId);
-    }, 2000);
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+
+      const newRecord: ReviewRecord = {
+        id: `review-${Date.now()}`,
+        fileName: file.name,
+        fileType: file.type || file.name.split('.').pop() || 'unknown',
+        uploadTime: new Date().toLocaleString('zh-CN'),
+        status: "pending",
+        content: text,
+      };
+
+      setRecords(prev => [newRecord, ...prev]);
+      setActiveRecord(newRecord);
+      
+      setTimeout(() => {
+        startAnalysis(newRecord);
+      }, 500);
+
+    } catch (error: any) {
+      console.error("文件读取失败:", error);
+      setUploadError(error.message || "文件读取失败，请重试");
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
   };
 
-  return (
-    <div className="space-y-8">
-      <header>
-        <h2 className="text-3xl font-serif font-bold text-mck-navy">合规审查</h2>
-        <p className="text-mck-navy/60 mt-1">基于 RAG 技术的穿透式法律风险拦截</p>
-      </header>
+  const startAnalysis = async (record: ReviewRecord) => {
+    setIsAnalyzing(true);
+    
+    setRecords(prev => prev.map(r => 
+      r.id === record.id ? { ...r, status: "analyzing" } : r
+    ));
+    setActiveRecord(prev => prev?.id === record.id ? { ...prev, status: "analyzing" } : prev);
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left: Issue List */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="mck-card mck-card-accent-red">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-mck-navy/60 mb-6 flex items-center justify-between">
-              风险雷达
-              <span className="bg-red-100 text-mck-red px-2 py-0.5 rounded-full text-[10px]">{issues.length} 个活跃风险</span>
-            </h3>
-            <div className="space-y-4">
-              {issues.map((issue) => (
-                <div 
-                  key={issue.id}
-                  onClick={() => setActiveIssue(issue)}
-                  className={cn(
-                    "p-4 border cursor-pointer transition-all",
-                    activeIssue?.id === issue.id ? "border-mck-blue bg-mck-blue/5" : "border-mck-border hover:border-mck-blue/50"
-                  )}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className={cn(
-                      "text-[9px] font-bold uppercase px-1.5 py-0.5",
-                      issue.severity === "high" ? "bg-red-100 text-mck-red" : "bg-orange-100 text-orange-700"
-                    )}>
-                      {issue.type}
-                    </span>
-                    <span className="text-[9px] text-mck-navy/40 font-mono">{issue.status}</span>
-                  </div>
-                  <h4 className="text-sm font-bold text-mck-navy mb-1">{issue.title}</h4>
-                  <p className="text-xs text-mck-navy/60 line-clamp-2">{issue.description}</p>
-                </div>
-              ))}
-            </div>
+    setTimeout(() => {
+      const thinkingProcess = `正在分析文件内容...
+识别文档类型：会议记录
+提取关键信息：
+- 会议类型：临时股东大会
+- 通知时间：2026年3月20日
+- 会议时间：2026年3月31日
+- 间隔天数：11天
+
+对照法规库检索...
+发现潜在问题：《公司法》第111条规定临时股东大会应提前15日通知
+
+生成合规建议...`;
+
+      const aiResponse = `## 合规审查结果
+
+### 问题识别
+根据《中华人民共和国公司法》(2024修订) 第一百一十一条规定：
+> "召开临时股东大会会议，应当将会议召开的时间、地点和审议的事项于会议召开十五日前通知各股东。"
+
+经审查，本次会议通知时间为2026年3月20日，会议召开时间为2026年3月31日，**间隔仅为11天**，未达到法定15日期限。
+
+### 风险等级
+🔴 **高风险** - 程序性违规
+
+### 修正建议
+1. **方案一（推荐）**：将会议日期顺延至2026年4月5日之后，确保满足15日通知期
+2. **方案二**：通过电子投票系统获取全体股东对缩短通知期的书面豁免函
+3. **方案三**：改为召开董事会会议审议该事项（如权限允许）
+
+### 相关法规
+- 《公司法》第111条
+- 《上市公司股东大会规则》第15条
+
+### 操作建议
+建议立即采取补救措施，避免后续决议被质疑效力。`;
+
+      const riskAlerts = [
+        "程序性风险：通知期限不足，可能导致决议效力瑕疵",
+        "诉讼风险：股东可能以此为由提起撤销之诉",
+        "监管风险：可能被监管部门关注并要求整改"
+      ];
+
+      const updatedRecord: ReviewRecord = {
+        ...record,
+        status: "completed",
+        aiThinking: thinkingProcess,
+        aiResponse: aiResponse,
+        riskAlerts: riskAlerts
+      };
+
+      setRecords(prev => prev.map(r => 
+        r.id === record.id ? updatedRecord : r
+      ));
+      setActiveRecord(updatedRecord);
+      setIsAnalyzing(false);
+    }, 3000);
+  };
+
+  const triggerFileUpload = () => {
+    fileInputRef.current?.click();
+  };
+
+  const deleteRecord = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRecords(prev => prev.filter(r => r.id !== id));
+    if (activeRecord?.id === id) {
+      setActiveRecord(null);
+    }
+  };
+
+  const getStatusIcon = (status: ReviewRecord["status"]) => {
+    switch (status) {
+      case "pending":
+        return <Clock size={14} className="text-orange-500" />;
+      case "analyzing":
+        return <Loader2 size={14} className="text-blue-500 animate-spin" />;
+      case "completed":
+        return <CheckCircle2 size={14} className="text-green-500" />;
+      case "error":
+        return <AlertTriangle size={14} className="text-red-500" />;
+    }
+  };
+
+  const getStatusText = (status: ReviewRecord["status"]) => {
+    switch (status) {
+      case "pending":
+        return "待分析";
+      case "analyzing":
+        return "分析中";
+      case "completed":
+        return "已完成";
+      case "error":
+        return "失败";
+    }
+  };
+
+  // 渲染审查内容面板
+  const renderContentPanel = () => (
+    <div className="mck-card overflow-hidden flex flex-col h-full">
+      <div className="flex items-center justify-between mb-4">
+        <h4 className="text-xs font-bold uppercase tracking-widest text-mck-navy/60 flex items-center gap-2">
+          <FileText size={14} />
+          审查内容
+        </h4>
+        <button
+          onClick={() => setExpandedPanel("content")}
+          className="p-1.5 hover:bg-mck-bg rounded transition-colors"
+          title="放大查看"
+        >
+          <Maximize2 size={14} className="text-mck-navy/40" />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto bg-mck-bg/30 p-4 rounded">
+        <pre className="text-sm text-mck-navy/80 whitespace-pre-wrap font-sans">
+          {activeRecord?.content || "暂无内容"}
+        </pre>
+      </div>
+    </div>
+  );
+
+  // 渲染AI结果面板
+  const renderResultPanel = () => (
+    <div className="mck-card overflow-hidden flex flex-col h-full">
+      <div className="flex items-center justify-between mb-4">
+        <h4 className="text-xs font-bold uppercase tracking-widest text-mck-navy/60 flex items-center gap-2">
+          <Brain size={14} />
+          AI 审查结果
+        </h4>
+        <button
+          onClick={() => setExpandedPanel("result")}
+          className="p-1.5 hover:bg-mck-bg rounded transition-colors"
+          title="放大查看"
+        >
+          <Maximize2 size={14} className="text-mck-navy/40" />
+        </button>
+      </div>
+      
+      {activeRecord?.status === "analyzing" ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <Loader2 size={32} className="text-mck-blue animate-spin mx-auto mb-4" />
+            <p className="text-mck-navy/60">AI 正在分析中...</p>
           </div>
+        </div>
+      ) : activeRecord?.status === "completed" ? (
+        <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+          {activeRecord.aiThinking && (
+            <div className="border border-mck-border rounded overflow-hidden">
+              <button
+                onClick={() => setShowThinking(!showThinking)}
+                className="w-full px-4 py-2 bg-mck-bg/50 flex items-center justify-between text-xs font-medium text-mck-navy/60 hover:bg-mck-bg transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <Brain size={12} />
+                  思考过程
+                </span>
+                {showThinking ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </button>
+              <AnimatePresence>
+                {showThinking && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="p-4 bg-gray-50">
+                      <pre className="text-xs text-mck-navy/60 whitespace-pre-wrap font-mono">
+                        {activeRecord.aiThinking}
+                      </pre>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
 
-          <div className="mck-card">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-mck-navy/60 mb-4">合规健康度</h3>
-            <div className="flex items-end gap-4">
-              <div className="text-4xl font-serif font-bold text-mck-blue">88</div>
-              <div className="text-xs text-mck-navy/40 mb-1">/ 100</div>
-              <div className="ml-auto text-xs text-green-600 font-bold flex items-center gap-1">
-                <CheckCircle2 size={12} />
-                较上月提升 4%
+          {activeRecord.aiResponse && (
+            <div className="prose prose-sm max-w-none">
+              <div className="bg-blue-50/50 p-4 rounded border border-blue-100">
+                <div dangerouslySetInnerHTML={{ 
+                  __html: activeRecord.aiResponse
+                  .replace(/## (.*)/g, '<h3 class="text-lg font-bold text-mck-navy mb-3">$1</h3>')
+                  .replace(/### (.*)/g, '<h4 class="text-sm font-bold text-mck-navy/80 mb-2 mt-4">$1</h4>')
+                  .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                  .replace(/> (.*)/g, '<blockquote class="border-l-4 border-mck-blue pl-3 my-2 text-mck-navy/70 italic">$1</blockquote>')
+                  .replace(/- (.*)/g, '<li class="ml-4 text-sm text-mck-navy/80">$1</li>')
+                  .replace(/🔴 (.*)/g, '<span class="text-red-600 font-bold">🔴 $1</span>')
+                  .replace(/\n\n/g, '</p><p class="text-sm text-mck-navy/80 my-2">')
+                }} />
               </div>
             </div>
-            <div className="mt-4 h-2 bg-mck-bg rounded-full overflow-hidden">
-              <div className="h-full bg-mck-blue w-[88%]" />
+          )}
+
+          {activeRecord.riskAlerts && activeRecord.riskAlerts.length > 0 && (
+            <div className="border border-red-200 rounded overflow-hidden">
+              <div className="px-4 py-2 bg-red-50 flex items-center gap-2">
+                <AlertTriangle size={14} className="text-red-500" />
+                <span className="text-xs font-bold text-red-700">合规风险提示</span>
+              </div>
+              <div className="p-4 space-y-2">
+                {activeRecord.riskAlerts.map((alert, index) => (
+                  <div key={index} className="flex items-start gap-2">
+                    <span className="text-red-500 mt-0.5">•</span>
+                    <span className="text-sm text-mck-navy/80">{alert}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="flex-1 flex items-center justify-center">
+          <p className="text-mck-navy/40">点击"开始审查"启动 AI 分析</p>
+        </div>
+      )}
+    </div>
+  );
+
+  // 放大视图
+  if (expandedPanel !== "none" && activeRecord) {
+    return (
+      <div className="fixed inset-0 z-50 bg-white">
+        <div className="h-full flex flex-col">
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-mck-border bg-white">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 bg-mck-blue/10 flex items-center justify-center">
+                {expandedPanel === "content" ? <FileText size={20} className="text-mck-blue" /> : <Brain size={20} className="text-mck-blue" />}
+              </div>
+              <div>
+                <h3 className="font-medium text-mck-navy">
+                  {expandedPanel === "content" ? "审查内容" : "AI 审查结果"}
+                </h3>
+                <p className="text-xs text-mck-navy/40">{activeRecord.fileName}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setExpandedPanel("none")}
+              className="p-2 hover:bg-mck-bg rounded-full transition-colors"
+            >
+              <Minimize2 size={20} className="text-mck-navy/60" />
+            </button>
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 overflow-hidden p-6">
+            {expandedPanel === "content" ? (
+              <div className="h-full overflow-y-auto bg-mck-bg/30 p-6 rounded max-w-4xl mx-auto">
+                <pre className="text-base text-mck-navy/80 whitespace-pre-wrap font-sans leading-relaxed">
+                  {activeRecord.content || "暂无内容"}
+                </pre>
+              </div>
+            ) : (
+              <div className="h-full overflow-y-auto space-y-6 max-w-4xl mx-auto">
+                {activeRecord.aiThinking && (
+                  <div className="border border-mck-border rounded overflow-hidden">
+                    <div className="px-4 py-3 bg-mck-bg/50 flex items-center gap-2">
+                      <Brain size={14} />
+                      <span className="text-sm font-medium text-mck-navy/70">思考过程</span>
+                    </div>
+                    <div className="p-6 bg-gray-50">
+                      <pre className="text-sm text-mck-navy/70 whitespace-pre-wrap font-mono leading-relaxed">
+                        {activeRecord.aiThinking}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+
+                {activeRecord.aiResponse && (
+                  <div className="bg-blue-50/50 p-6 rounded border border-blue-100">
+                    <div dangerouslySetInnerHTML={{ 
+                      __html: activeRecord.aiResponse
+                      .replace(/## (.*)/g, '<h2 class="text-xl font-bold text-mck-navy mb-4">$1</h2>')
+                      .replace(/### (.*)/g, '<h3 class="text-lg font-bold text-mck-navy/80 mb-3 mt-6">$1</h3>')
+                      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                      .replace(/> (.*)/g, '<blockquote class="border-l-4 border-mck-blue pl-4 my-3 text-mck-navy/70 italic bg-white/50 p-3 rounded">$1</blockquote>')
+                      .replace(/- (.*)/g, '<li class="ml-6 text-base text-mck-navy/80 mb-1">$1</li>')
+                      .replace(/🔴 (.*)/g, '<span class="text-red-600 font-bold text-lg">🔴 $1</span>')
+                      .replace(/\n\n/g, '</p><p class="text-base text-mck-navy/80 my-3 leading-relaxed">')
+                    }} />
+                  </div>
+                )}
+
+                {activeRecord.riskAlerts && activeRecord.riskAlerts.length > 0 && (
+                  <div className="border border-red-200 rounded overflow-hidden">
+                    <div className="px-4 py-3 bg-red-50 flex items-center gap-2">
+                      <AlertTriangle size={16} className="text-red-500" />
+                      <span className="text-sm font-bold text-red-700">合规风险提示</span>
+                    </div>
+                    <div className="p-6 space-y-3">
+                      {activeRecord.riskAlerts.map((alert, index) => (
+                        <div key={index} className="flex items-start gap-3">
+                          <span className="text-red-500 mt-1">•</span>
+                          <span className="text-base text-mck-navy/80">{alert}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 正常视图
+  return (
+    <div className="space-y-6 h-[calc(100vh-120px)]">
+      <header>
+        <h2 className="text-3xl font-serif font-bold text-mck-navy">合规审查</h2>
+        <p className="text-mck-navy/60 mt-1">AI 驱动的合规风险识别与建议</p>
+      </header>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-[calc(100%-80px)]">
+        {/* Left: Upload & History */}
+        <div className="lg:col-span-1 flex flex-col gap-4 h-full">
+          {/* Upload Area */}
+          <div className="mck-card">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-mck-navy/60 mb-4 flex items-center gap-2">
+              <Upload size={14} />
+              上传文件审查
+            </h3>
+            
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,.doc,.docx,.md,.pdf,.html"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            
+            <button
+              onClick={triggerFileUpload}
+              disabled={isUploading}
+              className="w-full py-8 border-2 border-dashed border-mck-border hover:border-mck-blue hover:bg-mck-blue/5 transition-all flex flex-col items-center gap-3 disabled:opacity-50"
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 size={24} className="text-mck-blue animate-spin" />
+                  <span className="text-sm text-mck-navy/60">上传中 {uploadProgress}%</span>
+                </>
+              ) : (
+                <>
+                  <Upload size={24} className="text-mck-navy/40" />
+                  <span className="text-sm text-mck-navy/60">点击上传会议文件</span>
+                  <span className="text-[10px] text-mck-navy/40">支持 PDF, Word, TXT, Markdown</span>
+                </>
+              )}
+            </button>
+
+            {uploadError && (
+              <div className="mt-3 p-2 bg-red-50 border border-red-200 text-red-600 text-xs rounded">
+                {uploadError}
+              </div>
+            )}
+          </div>
+
+          {/* History List */}
+          <div className="mck-card flex-1 overflow-hidden flex flex-col">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-mck-navy/60 mb-4 flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <Clock size={14} />
+                审查历史
+              </span>
+              <span className="bg-mck-bg px-2 py-0.5 rounded-full text-[10px]">{records.length}</span>
+            </h3>
+            
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+              {records.length === 0 ? (
+                <div className="text-center py-8 text-mck-navy/40 text-sm">
+                  暂无审查记录
+                </div>
+              ) : (
+                records.map((record) => (
+                  <div
+                    key={record.id}
+                    onClick={() => setActiveRecord(record)}
+                    className={cn(
+                      "p-3 border cursor-pointer transition-all group relative",
+                      activeRecord?.id === record.id 
+                        ? "border-mck-blue bg-mck-blue/5" 
+                        : "border-mck-border hover:border-mck-blue/50"
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <FileText size={12} className="text-mck-navy/40 flex-shrink-0" />
+                          <span className="text-xs font-medium text-mck-navy truncate">
+                            {record.fileName}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] text-mck-navy/40">
+                          {getStatusIcon(record.status)}
+                          <span>{getStatusText(record.status)}</span>
+                          <span>·</span>
+                          <span>{record.uploadTime}</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => deleteRecord(record.id, e)}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-red-100 rounded"
+                      >
+                        <X size={12} className="text-red-500" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
 
-        {/* Right: Detailed Audit & RAG */}
-        <div className="lg:col-span-2 space-y-6">
-          {activeIssue && (
-            <div className="mck-card border-l-4 border-l-mck-blue">
-              <div className="flex items-center justify-between mb-8">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-mck-blue/10 flex items-center justify-center text-mck-blue">
-                    <ShieldCheck size={20} />
+        {/* Right: Review Content */}
+        <div className="lg:col-span-3 h-full overflow-hidden">
+          {!activeRecord ? (
+            <div className="h-full flex items-center justify-center mck-card">
+              <div className="text-center">
+                <ShieldCheck size={48} className="text-mck-navy/20 mx-auto mb-4" />
+                <p className="text-mck-navy/40">请上传文件或选择历史记录开始审查</p>
+              </div>
+            </div>
+          ) : (
+            <div className="h-full flex flex-col gap-4">
+              {/* File Info Header */}
+              <div className="mck-card py-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-mck-blue/10 flex items-center justify-center">
+                      <FileText size={20} className="text-mck-blue" />
+                    </div>
+                    <div>
+                      <h3 className="font-medium text-mck-navy">{activeRecord.fileName}</h3>
+                      <div className="flex items-center gap-3 text-xs text-mck-navy/40 mt-0.5">
+                        <span>{activeRecord.uploadTime}</span>
+                        <span>·</span>
+                        <span className="flex items-center gap-1">
+                          {getStatusIcon(activeRecord.status)}
+                          {getStatusText(activeRecord.status)}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="text-xl font-serif font-bold">{activeIssue.title}</h3>
-                    <p className="text-xs text-mck-navy/40 uppercase tracking-widest">风险详情与修正建议</p>
-                  </div>
-                </div>
-                <div className="flex gap-4">
-                  <button className="px-6 py-2 bg-mck-navy text-white text-xs font-bold uppercase tracking-widest hover:bg-mck-blue transition-all">
-                    标记为已修正
-                  </button>
-                  {meetingId && onGenerateDocuments && (
-                    <button 
-                      onClick={handleGenerate}
-                      disabled={isGenerating}
-                      className="px-6 py-2 bg-mck-blue text-white text-xs font-bold uppercase tracking-widest hover:bg-mck-navy transition-all disabled:opacity-50 flex items-center gap-2"
+                  {activeRecord.status === "pending" && (
+                    <button
+                      onClick={() => startAnalysis(activeRecord)}
+                      disabled={isAnalyzing}
+                      className="px-4 py-2 bg-mck-blue text-white text-xs font-bold uppercase tracking-widest hover:bg-mck-navy transition-all disabled:opacity-50 flex items-center gap-2"
                     >
-                      {isGenerating ? <RefreshCw size={14} className="animate-spin" /> : <FileCheck size={14} />}
-                      {isGenerating ? "生成中..." : "生成会议文书"}
+                      {isAnalyzing ? <Loader2 size={14} className="animate-spin" /> : <Brain size={14} />}
+                      开始审查
                     </button>
                   )}
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div className="space-y-6">
-                  <div>
-                    <h4 className="text-[10px] font-bold uppercase tracking-widest text-mck-navy/40 mb-2">风险描述</h4>
-                    <p className="text-sm text-mck-navy/80 leading-relaxed">{activeIssue.description}</p>
-                  </div>
-                  <div>
-                    <h4 className="text-[10px] font-bold uppercase tracking-widest text-mck-navy/40 mb-2">AI 修正建议</h4>
-                    <div className="p-4 bg-mck-bg border-l-4 border-mck-blue text-sm italic text-mck-navy/70">
-                      "建议立即发布补充通知，将会议日期顺延4日，或通过电子投票系统获取全体股东对缩短通知期的书面豁免函。"
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  <div>
-                    <h4 className="text-[10px] font-bold uppercase tracking-widest text-mck-navy/40 mb-2">法律依据 (RAG 检索)</h4>
-                    <div className="p-4 border border-mck-border space-y-3">
-                      <div className="flex items-center gap-2 text-mck-blue">
-                        <BookOpen size={14} />
-                        <span className="text-xs font-bold">{activeIssue.lawReference}</span>
-                      </div>
-                      <p className="text-xs text-mck-navy/60 leading-relaxed">
-                        {mockLaws.find(l => l.title.includes(activeIssue.lawReference.split('》')[0]))?.content || "正在检索详细条款..."}
-                      </p>
-                      <button className="text-[10px] font-bold text-mck-blue hover:underline flex items-center gap-1">
-                        查看完整法条 <ArrowRight size={10} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
+              {/* Analysis Content - Side by Side */}
+              <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {renderContentPanel()}
+                {renderResultPanel()}
               </div>
             </div>
           )}
-
-          <div className="mck-card">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-serif font-bold flex items-center gap-2">
-                <Brain size={20} className="text-mck-blue" />
-                2024 新公司法知识库 (RAG)
-              </h3>
-              <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-mck-navy/40" />
-                <input 
-                  type="text" 
-                  placeholder="搜索法条、案例或监管问答..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 pr-4 py-2 text-xs border border-mck-border focus:outline-none focus:border-mck-blue w-64"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {mockLaws.map((law) => (
-                <div key={law.id} className="p-4 border border-mck-border hover:bg-mck-bg transition-colors group">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-sm font-bold text-mck-navy group-hover:text-mck-blue transition-colors">{law.title}</h4>
-                    <span className="text-[9px] text-mck-navy/40 font-mono">{law.updateDate}</span>
-                  </div>
-                  <p className="text-xs text-mck-navy/60 line-clamp-2 mb-3">{law.content}</p>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[9px] font-bold uppercase tracking-widest text-mck-navy/40">{law.source}</span>
-                    <button className="text-[9px] font-bold text-mck-blue opacity-0 group-hover:opacity-100 transition-opacity">引用此条</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     </div>

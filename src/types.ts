@@ -53,6 +53,9 @@ export interface KnowledgeItem {
   content: string;
   lastModified: string;
   status: "已生效" | "草案";
+  filePath?: string;
+  fileName?: string;
+  fullContent?: string;
 }
 
 export interface Personnel {

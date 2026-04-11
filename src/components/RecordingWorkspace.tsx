@@ -1,279 +1,516 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Mic, MicOff, User, Brain, AlertTriangle, FileCheck, RefreshCw } from "lucide-react";
-import { ASRSegment, ComplianceIssue, KnowledgeItem } from "../types";
-import { motion, AnimatePresence } from "framer-motion";
-import { GoogleGenAI } from "@google/genai";
+import { FileText, Upload, Loader2, Edit3, Save, Download, Mic, Clock, Trash2, FileAudio, Type, AlignLeft, AlignCenter, AlignRight, AlignJustify, X, Maximize2 } from "lucide-react";
 import { cn } from "@/src/lib/utils";
 
-const initialKnowledge: KnowledgeItem[] = [
-  { id: "k1", title: "中华人民共和国公司法 (2024修订)", category: "法律法规", content: "第一百一十一条：董事会会议，应于会议召开十日前通知全体董事和监事。董事会召开临时会议，可以另定召集董事会的通知方式和通知时限。", lastModified: "2024-01-01", status: "已生效" },
-  { id: "k2", title: "智理科技股份有限公司章程", category: "公司章程", content: "第八十二条：公司董事会会议应当有过半数的董事出席方可举行。董事会作出决议，必须经全体董事的过半数通过。", lastModified: "2025-12-20", status: "已生效" },
-  { id: "k3", title: "关联交易管理制度", category: "规章制度", content: "第十五条：公司与关联人发生的交易金额在3000万元以上，且占公司最近一期经审计净资产绝对值5%以上的关联交易，应当提交股东大会审议。", lastModified: "2026-01-15", status: "已生效" },
-];
-
-const mockASR: ASRSegment[] = [
-  { id: "1", speaker: "王董事长", role: "董事长", text: "各位董事，现在开始审议关于公司向银行申请5000万元授信的议案。", timestamp: "10:00:05" },
-  { id: "2", speaker: "李董秘", role: "董秘", text: "该授信主要用于补充流动资金，利率为3.5%，期限一年。", timestamp: "10:00:45" },
-  { id: "3", speaker: "张独立董事", role: "独立董事", text: "我关注到公司目前的资产负债率已经接近65%，这次授信是否会触发重大资产重组的审批程序？", timestamp: "10:01:30" },
-];
-
-interface RecordingWorkspaceProps {
-  meetingId?: string | null;
-  onAnalysisComplete?: (id: string) => void;
+interface MeetingMinutesRecord {
+  id: string;
+  title: string;
+  date: string;
+  content: string;
+  hasAudio: boolean;
+  audioFileName?: string;
 }
 
-export const RecordingWorkspace: React.FC<RecordingWorkspaceProps> = ({ meetingId, onAnalysisComplete }) => {
-  const [isRecording, setIsRecording] = useState(false);
-  const [segments, setSegments] = useState<ASRSegment[]>(() => {
-    if (!meetingId) return mockASR;
-    const saved = localStorage.getItem(`corporate_asr_segments_${meetingId}`);
-    return saved ? JSON.parse(saved) : mockASR;
+interface DocumentFormat {
+  fontSize: number;
+  lineHeight: number;
+  fontFamily: string;
+  textAlign: "left" | "center" | "right" | "justify";
+  titleFontSize: number;
+}
+
+const mockMeetingMinutes = `会议时间：2026年3月31日 10:00
+会议地点：公司会议室
+主持人：王董事长
+记录人：李董秘
+出席人员：王董事长、张独立董事、刘监事等
+
+会议内容：
+
+王董事长：各位董事，现在开始审议关于公司向银行申请5000万元授信的议案。
+
+李董秘：该授信主要用于补充流动资金，利率为3.5%，期限一年。
+
+张独立董事：我关注到公司目前的资产负债率已经接近65%，这次授信是否会触发重大资产重组的审批程序？
+
+刘监事：监事会已对该议案进行预审，认为程序符合公司章程。`;
+
+const STORAGE_KEY = "corporate_meeting_minutes_records";
+
+const fontOptions = [
+  { value: "SimSun, '宋体', serif", label: "宋体" },
+  { value: "SimHei, '黑体', sans-serif", label: "黑体" },
+  { value: "'Microsoft YaHei', '微软雅黑', sans-serif", label: "微软雅黑" },
+  { value: "'KaiTi', '楷体', serif", label: "楷体" },
+  { value: "'FangSong', '仿宋', serif", label: "仿宋" },
+];
+
+export const RecordingWorkspace: React.FC = () => {
+  const [records, setRecords] = useState<MeetingMinutesRecord[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    return saved ? JSON.parse(saved) : [];
   });
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState<string | null>(() => {
-    if (!meetingId) return null;
-    return localStorage.getItem(`corporate_analysis_result_${meetingId}`);
+  
+  const [currentRecord, setCurrentRecord] = useState<MeetingMinutesRecord | null>(null);
+  const [meetingContent, setMeetingContent] = useState<string>(mockMeetingMinutes);
+  const [meetingTitle, setMeetingTitle] = useState<string>("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [expandedPanel, setExpandedPanel] = useState<"editor" | "preview" | null>(null);
+  
+  const [docFormat, setDocFormat] = useState<DocumentFormat>({
+    fontSize: 14,
+    lineHeight: 1.8,
+    fontFamily: "SimSun, '宋体', serif",
+    textAlign: "justify",
+    titleFontSize: 22,
   });
-  const [issues, setIssues] = useState<ComplianceIssue[]>([]);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (meetingId) {
-      localStorage.setItem(`corporate_asr_segments_${meetingId}`, JSON.stringify(segments));
-    }
-  }, [segments, meetingId]);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+  }, [records]);
 
-  useEffect(() => {
-    if (meetingId && analysisResult) {
-      localStorage.setItem(`corporate_analysis_result_${meetingId}`, analysisResult);
-    }
-  }, [analysisResult, meetingId]);
+  const createNewRecord = () => {
+    const newRecord: MeetingMinutesRecord = {
+      id: Date.now().toString(),
+      title: `会议纪要 - ${new Date().toLocaleString('zh-CN')}`,
+      date: new Date().toISOString(),
+      content: mockMeetingMinutes,
+      hasAudio: false,
+    };
+    setRecords(prev => [newRecord, ...prev]);
+    setCurrentRecord(newRecord);
+    setMeetingContent(newRecord.content);
+    setMeetingTitle(newRecord.title);
+    setIsEditing(true);
+  };
 
-  useEffect(() => {
-    if (scrollRef.current) {
-      try {
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      } catch (e) {
-        // Ignore errors from scrollRef not being mounted yet
-      }
-    }
-  }, [segments]);
+  const selectRecord = (record: MeetingMinutesRecord) => {
+    setCurrentRecord(record);
+    setMeetingContent(record.content);
+    setMeetingTitle(record.title);
+    setIsEditing(false);
+  };
 
-  const toggleRecording = () => {
-    setIsRecording(!isRecording);
-    if (!isRecording) {
-      // Simulate incoming ASR
-      setTimeout(() => {
-        const newSeg: ASRSegment = {
-          id: Date.now().toString(),
-          speaker: "刘监事",
-          role: "监事",
-          text: "监事会已对该议案进行预审，认为程序符合公司章程。",
-          timestamp: new Date().toLocaleTimeString(),
-        };
-        setSegments(prev => [...prev, newSeg]);
-      }, 2000);
+  const deleteRecord = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRecords(prev => prev.filter(r => r.id !== id));
+    if (currentRecord?.id === id) {
+      setCurrentRecord(null);
+      setMeetingContent(mockMeetingMinutes);
+      setMeetingTitle("");
     }
   };
 
-  const runAIAnalysis = async () => {
-    setIsAnalyzing(true);
-    setAnalysisResult(null);
-    
+  const handleSaveContent = () => {
+    setIsEditing(false);
+    if (currentRecord) {
+      const updatedRecord = { ...currentRecord, content: meetingContent, title: meetingTitle || currentRecord.title };
+      setCurrentRecord(updatedRecord);
+      setRecords(prev => prev.map(r => r.id === updatedRecord.id ? updatedRecord : r));
+    } else {
+      const newRecord: MeetingMinutesRecord = {
+        id: Date.now().toString(),
+        title: meetingTitle || `会议纪要 - ${new Date().toLocaleString('zh-CN')}`,
+        date: new Date().toISOString(),
+        content: meetingContent,
+        hasAudio: false,
+      };
+      setRecords(prev => [newRecord, ...prev]);
+      setCurrentRecord(newRecord);
+    }
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setUploadError(null);
+    setUploadProgress(0);
+
     try {
-      // Fetch dynamic RAG context from localStorage
-      const savedKnowledge = localStorage.getItem("corporate_knowledge_base");
-      const knowledge: KnowledgeItem[] = savedKnowledge ? JSON.parse(savedKnowledge) : initialKnowledge;
-      const ragContext = knowledge.map(k => `【${k.category}】${k.title}: ${k.content}`).join("\n\n");
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => Math.min(prev + 20, 90));
+      }, 100);
 
-      // Fetch user-configured API keys
-      const savedSettings = localStorage.getItem("corporate_ai_settings");
-      const settings = savedSettings ? JSON.parse(savedSettings) : null;
-      const apiKey = settings?.geminiApiKey || process.env.GEMINI_API_KEY!;
-
-      const ai = new GoogleGenAI({ apiKey });
-      const fullText = segments.map(s => `${s.speaker}(${s.role}): ${s.text}`).join("\n");
+      const text = await file.text();
       
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `作为一名资深董秘和法律专家，请分析以下会议记录的合规性，并提取关键决议要素。请展现你的“深度思考”过程。
-        
-        【本地法律规章库 (RAG Context)】:
-        ${ragContext}
-        
-        【当前会议记录】:
-        ${fullText}
-        
-        要求：
-        1. 严格参考【本地法律规章库】中的条款进行合规性识别。
-        2. 识别潜在的法律风险。
-        3. 提取议案核心要素。
-        4. 给出合规建议。`,
-        config: {
-          systemInstruction: "你是一个专业的企业治理AI助手，擅长法律风险穿透和合规文书生成。你必须优先参考用户提供的本地法律规章库内容进行判断。",
-        }
-      });
+      clearInterval(progressInterval);
+      setUploadProgress(100);
 
-      setAnalysisResult(response.text);
+      setMeetingContent(text);
+      setIsEditing(true);
       
-      // Mock issues based on AI response
-      const newIssues: ComplianceIssue[] = [
-        { 
-          id: `i-${Date.now()}`, 
-          meetingId: meetingId || "unknown",
-          type: "实质性", 
-          title: "资产负债率预警", 
-          description: "独立董事提出的65%负债率可能触及内部风控红线。", 
-          lawReference: "《公司章程》第82条", 
-          severity: "medium", 
-          status: "待处理" 
-        }
-      ];
-      setIssues(newIssues);
-
-      // Save to global compliance issues store
-      const savedIssues = localStorage.getItem("corporate_compliance_issues");
-      const allIssues: ComplianceIssue[] = savedIssues ? JSON.parse(savedIssues) : [];
-      localStorage.setItem("corporate_compliance_issues", JSON.stringify([...allIssues, ...newIssues]));
-
-      // Auto-jump to compliance review after a short delay
-      if (onAnalysisComplete && meetingId) {
-        setTimeout(() => onAnalysisComplete(meetingId), 2000);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
       }
-    } catch (error) {
-      console.error("AI Analysis failed", error);
+    } catch (error: any) {
+      console.error("文件读取失败:", error);
+      setUploadError(error.message || "文件读取失败，请重试");
     } finally {
-      setIsAnalyzing(false);
+      setIsUploading(false);
+      setUploadProgress(0);
     }
   };
 
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-[calc(100vh-180px)]">
-      {/* Left: ASR Stream */}
-      <div className="flex flex-col h-full mck-card overflow-hidden">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-serif font-bold flex items-center gap-2">
-            <Mic size={20} className={isRecording ? "text-mck-red animate-pulse" : "text-mck-blue"} />
-            智能语音解析流
-          </h3>
-          <button
-            onClick={toggleRecording}
-            className={cn(
-              "px-6 py-2 text-xs font-bold uppercase tracking-widest transition-all",
-              isRecording ? "bg-mck-red text-white" : "bg-mck-navy text-white hover:bg-mck-blue"
-            )}
-          >
-            {isRecording ? "停止录音" : "开始录音"}
-          </button>
-        </div>
+  const handleAudioUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-6 pr-4">
-          {segments.map((seg) => (
-            <div key={seg.id} className="group">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-[10px] font-bold uppercase px-2 py-0.5 bg-mck-bg text-mck-navy/60">
-                  {seg.role}
-                </span>
-                <span className="text-xs font-bold text-mck-navy">{seg.speaker}</span>
-                <span className="text-[10px] text-mck-navy/40 font-mono">{seg.timestamp}</span>
-              </div>
-              <p className="text-sm leading-relaxed text-mck-navy/80 pl-4 border-l-2 border-mck-border group-hover:border-mck-blue transition-colors">
-                {seg.text}
-              </p>
-            </div>
-          ))}
-          {isRecording && (
-            <div className="flex items-center gap-2 text-mck-navy/40 italic text-xs animate-pulse">
-              <div className="flex gap-1">
-                <div className="w-1 h-1 bg-current rounded-full" />
-                <div className="w-1 h-1 bg-current rounded-full" />
-                <div className="w-1 h-1 bg-current rounded-full" />
-              </div>
-              正在实时转写...
-            </div>
+    setIsUploading(true);
+    setUploadError(null);
+    setUploadProgress(0);
+
+    try {
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => Math.min(prev + 10, 90));
+      }, 200);
+
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+
+      const mockTranscription = `【语音识别结果 - ${file.name}】\n\n${mockMeetingMinutes}`;
+      setMeetingContent(mockTranscription);
+      
+      if (currentRecord) {
+        const updatedRecord = { 
+          ...currentRecord, 
+          content: mockTranscription,
+          hasAudio: true,
+          audioFileName: file.name
+        };
+        setCurrentRecord(updatedRecord);
+        setRecords(prev => prev.map(r => r.id === updatedRecord.id ? updatedRecord : r));
+      } else {
+        const newRecord: MeetingMinutesRecord = {
+          id: Date.now().toString(),
+          title: `会议纪要 - ${new Date().toLocaleString('zh-CN')}`,
+          date: new Date().toISOString(),
+          content: mockTranscription,
+          hasAudio: true,
+          audioFileName: file.name
+        };
+        setRecords(prev => [newRecord, ...prev]);
+        setCurrentRecord(newRecord);
+      }
+      
+      setIsEditing(true);
+      
+      if (audioInputRef.current) {
+        audioInputRef.current.value = "";
+      }
+    } catch (error: any) {
+      console.error("音频处理失败:", error);
+      setUploadError(error.message || "音频处理失败，请重试");
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
+  };
+
+  const triggerFileUpload = () => {
+    fileInputRef.current?.click();
+  };
+
+  const triggerAudioUpload = () => {
+    audioInputRef.current?.click();
+  };
+
+  const exportToWord = () => {
+    const content = meetingContent;
+    const title = meetingTitle || "会议纪要";
+    
+    const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>${title}</title>
+  <style>
+    @page { size: A4; margin: 2.54cm; }
+    body { 
+      font-family: ${docFormat.fontFamily}; 
+      font-size: ${docFormat.fontSize}pt; 
+      line-height: ${docFormat.lineHeight}; 
+      text-align: ${docFormat.textAlign};
+    }
+    .title { 
+      font-size: ${docFormat.titleFontSize}pt; 
+      font-weight: bold; 
+      text-align: center; 
+      margin-bottom: 24pt; 
+      font-family: SimHei, '黑体', sans-serif;
+    }
+    .content { white-space: pre-wrap; }
+    p { margin: 0 0 12pt 0; text-indent: 2em; }
+    .header { text-indent: 0; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="title">${title}</div>
+  <div class="content">${content.replace(/\n/g, '</p><p>')}</div>
+</body>
+</html>`;
+
+    const blob = new Blob(['\ufeff', htmlContent], {
+      type: 'application/msword'
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${title}.doc`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleString('zh-CN', { 
+      month: 'short', 
+      day: 'numeric', 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+  };
+
+  // 渲染编辑器内容
+  const renderEditor = () => (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-serif font-bold flex items-center gap-2">
+            <FileText size={18} className="text-mck-blue" />
+            会议纪要
+          </h3>
+          {currentRecord?.hasAudio && (
+            <span className="px-2 py-0.5 bg-purple-100 text-purple-600 text-[10px] rounded-full flex items-center gap-1">
+              <Mic size={10} />
+              含录音
+            </span>
           )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {expandedPanel !== "editor" && (
+            <button
+              onClick={() => setExpandedPanel("editor")}
+              className="p-1.5 text-mck-navy/60 hover:text-mck-blue hover:bg-mck-bg rounded transition-all"
+              title="放大"
+            >
+              <Maximize2 size={16} />
+            </button>
+          )}
+          
+          <input ref={audioInputRef} type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.wma,.flac,.mp4,.webm" onChange={handleAudioUpload} className="hidden" />
+          <button onClick={triggerAudioUpload} disabled={isUploading} className="px-2.5 py-1.5 text-xs font-bold bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1 rounded">
+            {isUploading ? <><Loader2 size={10} className="animate-spin" />{uploadProgress}%</> : <><Mic size={10} />录音</>}
+          </button>
+
+          <input ref={fileInputRef} type="file" accept=".txt,.doc,.docx,.md,.pdf" onChange={handleFileUpload} className="hidden" />
+          <button onClick={triggerFileUpload} disabled={isUploading} className="px-2.5 py-1.5 text-xs font-bold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 flex items-center gap-1 rounded">
+            <Upload size={10} />文稿
+          </button>
+
+          <button onClick={() => isEditing ? handleSaveContent() : setIsEditing(true)} disabled={isUploading} className={cn("px-2.5 py-1.5 text-xs font-bold flex items-center gap-1 rounded", isEditing ? "bg-mck-blue text-white" : "bg-mck-navy text-white")}>
+            {isEditing ? <Save size={10} /> : <Edit3 size={10} />}
+            {isEditing ? "保存" : "编辑"}
+          </button>
         </div>
       </div>
 
-      {/* Right: AI Analysis & RAG */}
-      <div className="flex flex-col h-full space-y-6">
-        <div className="mck-card flex-1 overflow-hidden flex flex-col">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-serif font-bold flex items-center gap-2">
-              <Brain size={20} className="text-mck-blue" />
-              DeepSeek R1 穿透审查
-            </h3>
+      <div className="mb-3">
+        <input type="text" value={meetingTitle} onChange={(e) => setMeetingTitle(e.target.value)} placeholder="输入会议纪要标题..." className="w-full px-3 py-2 text-sm font-bold text-mck-navy bg-mck-bg/30 border border-mck-border rounded focus:outline-none focus:border-mck-blue" readOnly={!isEditing} />
+      </div>
+
+      {uploadError && <div className="mb-3 p-2 bg-red-50 border border-red-200 text-red-700 text-xs rounded">{uploadError}</div>}
+
+      <div className="flex-1 overflow-hidden">
+        {isEditing ? (
+          <textarea ref={textareaRef} value={meetingContent} onChange={(e) => setMeetingContent(e.target.value)} className="w-full h-full p-4 text-sm leading-relaxed text-mck-navy/80 bg-mck-bg/30 border border-mck-border rounded resize-none focus:outline-none focus:border-mck-blue font-sans" placeholder="在此输入或编辑会议纪要..." />
+        ) : (
+          <div className="w-full h-full p-4 overflow-y-auto bg-mck-bg/20 rounded">
+            <pre className="text-sm leading-relaxed text-mck-navy/80 whitespace-pre-wrap font-sans">{meetingContent}</pre>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // 渲染预览内容
+  const renderPreview = () => (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-base font-serif font-bold flex items-center gap-2">
+          <FileText size={18} className="text-mck-blue" />
+          Word 预览
+        </h3>
+        <div className="flex items-center gap-2">
+          {expandedPanel !== "preview" && (
             <button
-              onClick={runAIAnalysis}
-              disabled={isAnalyzing}
-              className="px-6 py-2 bg-mck-blue text-white text-xs font-bold uppercase tracking-widest hover:bg-mck-navy disabled:opacity-50 transition-all flex items-center gap-2"
+              onClick={() => setExpandedPanel("preview")}
+              className="p-1.5 text-mck-navy/60 hover:text-mck-blue hover:bg-mck-bg rounded transition-all"
+              title="放大"
             >
-              {isAnalyzing ? <RefreshCw size={14} className="animate-spin" /> : <Brain size={14} />}
-              {isAnalyzing ? "深度思考中..." : "启动合规审查"}
+              <Maximize2 size={16} />
+            </button>
+          )}
+          <button onClick={exportToWord} className="px-3 py-1.5 text-xs font-bold bg-mck-blue text-white hover:bg-mck-navy flex items-center gap-1.5 rounded">
+            <Download size={12} />导出
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 mb-3 p-2 bg-mck-bg/30 rounded">
+        <select value={docFormat.fontFamily} onChange={(e) => setDocFormat(prev => ({ ...prev, fontFamily: e.target.value }))} className="text-xs px-2 py-1 border border-mck-border rounded bg-white">
+          {fontOptions.map(font => <option key={font.value} value={font.value}>{font.label}</option>)}
+        </select>
+
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-mck-navy/60">字号</span>
+          <input type="range" min={10} max={18} step={0.5} value={docFormat.fontSize} onChange={(e) => setDocFormat(prev => ({ ...prev, fontSize: parseFloat(e.target.value) }))} className="w-16" />
+          <span className="text-xs text-mck-navy/80 w-6">{docFormat.fontSize}</span>
+        </div>
+
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-mck-navy/60">行距</span>
+          <input type="range" min={1} max={3} step={0.1} value={docFormat.lineHeight} onChange={(e) => setDocFormat(prev => ({ ...prev, lineHeight: parseFloat(e.target.value) }))} className="w-16" />
+          <span className="text-xs text-mck-navy/80 w-6">{docFormat.lineHeight}</span>
+        </div>
+
+        <div className="flex items-center gap-1 border-l border-mck-border pl-2">
+          {[{ key: "left", icon: AlignLeft }, { key: "center", icon: AlignCenter }, { key: "right", icon: AlignRight }, { key: "justify", icon: AlignJustify }].map(({ key, icon: Icon }) => (
+            <button key={key} onClick={() => setDocFormat(prev => ({ ...prev, textAlign: key as any }))} className={cn("p-1 rounded transition-colors", docFormat.textAlign === key ? "bg-mck-blue text-white" : "text-mck-navy/60 hover:bg-mck-bg")}>
+              <Icon size={14} />
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-hidden bg-gray-100 border border-mck-border rounded">
+        <div className="h-full overflow-y-auto p-4">
+          <div className="bg-white shadow-lg mx-auto" style={{ width: '210mm', minHeight: '297mm', padding: '25.4mm', boxSizing: 'border-box' }}>
+            <div className="border-b border-gray-300 pb-4 mb-6">
+              <p className="text-xs text-gray-400 text-center">智理科技股份有限公司</p>
+            </div>
+
+            <h1 className="font-bold text-center mb-8 text-black" style={{ fontSize: `${docFormat.titleFontSize}pt`, fontFamily: "SimHei, '黑体', sans-serif", lineHeight: 1.4 }}>
+              {meetingTitle || "会议纪要"}
+            </h1>
+
+            <div className="text-black" style={{ fontSize: `${docFormat.fontSize}pt`, lineHeight: docFormat.lineHeight, fontFamily: docFormat.fontFamily, textAlign: docFormat.textAlign }}>
+              {meetingContent.split('\n').map((line, index) => {
+                const isHeader = line.match(/^(会议时间|会议地点|主持人|记录人|出席人员|会议内容)：/);
+                const isSpeaker = line.match(/^([^：:]+)[：:]/);
+                
+                if (!line.trim()) return <div key={index} style={{ height: `${docFormat.fontSize * docFormat.lineHeight * 0.5}pt` }} />;
+                
+                if (isHeader) return <p key={index} className="font-bold mb-2" style={{ fontFamily: "SimHei, '黑体', sans-serif", textIndent: 0 }}>{line}</p>;
+                
+                if (isSpeaker && !line.startsWith('会议')) {
+                  const [speaker, ...contentParts] = line.split(/[：:]/);
+                  const content = contentParts.join('：');
+                  return <p key={index} className="mb-3" style={{ textIndent: 0 }}><span className="font-bold" style={{ fontFamily: "SimHei, '黑体', sans-serif" }}>{speaker}：</span>{content}</p>;
+                }
+                
+                return <p key={index} className="mb-3" style={{ textIndent: `${docFormat.fontSize * 2}pt` }}>{line}</p>;
+              })}
+            </div>
+
+            <div className="border-t border-gray-300 pt-4 mt-12">
+              <p className="text-xs text-gray-400 text-center">生成时间：{new Date().toLocaleString('zh-CN')}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="h-[calc(100vh-140px)]">
+      {/* Expanded Panel Overlay */}
+      {expandedPanel && (
+        <div className="fixed inset-0 z-50 bg-white p-6 flex flex-col">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-serif font-bold text-mck-navy">
+              {expandedPanel === "editor" ? "会议纪要" : "Word 预览"}
+            </h2>
+            <button
+              onClick={() => setExpandedPanel(null)}
+              className="p-2 text-mck-navy/60 hover:text-mck-red hover:bg-red-50 rounded-full transition-all"
+            >
+              <X size={24} />
             </button>
           </div>
+          <div className="flex-1 overflow-hidden">
+            {expandedPanel === "editor" ? renderEditor() : renderPreview()}
+          </div>
+        </div>
+      )}
 
-          <div className="flex-1 overflow-y-auto pr-4">
-            <AnimatePresence mode="wait">
-              {isAnalyzing ? (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="space-y-4"
+      {/* Normal Layout */}
+      <div className="flex gap-4 h-full">
+        {/* Left Sidebar: History Records */}
+        <div className="w-64 flex-shrink-0 mck-card overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-bold uppercase tracking-widest text-mck-navy/60 flex items-center gap-2">
+              <Clock size={14} />历史记录
+            </h3>
+            <button onClick={createNewRecord} className="px-2 py-1 text-xs font-bold bg-mck-blue text-white hover:bg-mck-navy transition-all rounded">+ 新建</button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+            {records.length === 0 ? (
+              <div className="text-center py-8 text-mck-navy/40 text-xs">
+                <FileText size={32} className="mx-auto mb-2 opacity-30" />
+                <p>暂无会议纪要</p>
+              </div>
+            ) : (
+              records.map((record) => (
+                <div
+                  key={record.id}
+                  onClick={() => selectRecord(record)}
+                  className={cn("p-3 rounded cursor-pointer transition-all group relative border", currentRecord?.id === record.id ? "bg-mck-blue/10 border-mck-blue/50" : "bg-white border-mck-border hover:border-mck-blue/30")}
                 >
-                  <div className="h-4 bg-mck-bg rounded w-3/4 animate-pulse" />
-                  <div className="h-4 bg-mck-bg rounded w-full animate-pulse" />
-                  <div className="h-4 bg-mck-bg rounded w-5/6 animate-pulse" />
-                  <div className="p-4 border border-dashed border-mck-blue/30 rounded text-xs text-mck-blue italic">
-                    正在检索 2024 新《公司法》知识库...
+                  <div className="flex items-start gap-2">
+                    <div className={cn("w-8 h-8 rounded flex items-center justify-center flex-shrink-0", record.hasAudio ? "bg-purple-100 text-purple-600" : "bg-mck-bg text-mck-navy/60")}>
+                      {record.hasAudio ? <FileAudio size={16} /> : <FileText size={16} />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-mck-navy truncate pr-5">{record.title}</p>
+                      <p className="text-[10px] text-mck-navy/50 mt-1">{formatDate(record.date)}</p>
+                      {record.audioFileName && <p className="text-[10px] text-purple-500 truncate">🎤 {record.audioFileName}</p>}
+                    </div>
                   </div>
-                </motion.div>
-              ) : analysisResult ? (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="prose prose-sm max-w-none text-mck-navy/80"
-                >
-                  <div className="bg-mck-bg/50 p-4 border-l-4 border-mck-blue mb-6">
-                    <p className="text-[10px] font-bold uppercase text-mck-blue mb-2">思考链路 (Thinking Process)</p>
-                    <p className="text-xs italic">
-                      分析发言人角色 {"->"} 提取关键议案（5000万授信） {"->"} 匹配公司章程权限 {"->"} 校验新公司法第111条程序要求...
-                    </p>
-                  </div>
-                  <div className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
-                    {analysisResult}
-                  </div>
-                </motion.div>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-mck-navy/40 text-center p-8">
-                  <Brain size={48} className="mb-4 opacity-20" />
-                  <p>点击“启动合规审查”以利用 AI 进行法律风险穿透</p>
+                  <button onClick={(e) => deleteRecord(record.id, e)} className="absolute top-2 right-2 p-1 text-mck-navy/20 hover:text-mck-red opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Trash2 size={12} />
+                  </button>
                 </div>
-              )}
-            </AnimatePresence>
+              ))
+            )}
           </div>
         </div>
 
-        {/* Compliance Issues */}
-        <div className="mck-card h-48 overflow-y-auto">
-          <h4 className="text-xs font-bold uppercase tracking-widest text-mck-navy/60 mb-4 flex items-center gap-2">
-            <AlertTriangle size={14} className="text-mck-red" />
-            风险拦截清单
-          </h4>
-          <div className="space-y-3">
-            {issues.length > 0 ? issues.map(issue => (
-              <div key={issue.id} className="flex items-start gap-3 p-3 bg-red-50 border border-red-100">
-                <div className="w-2 h-2 rounded-full bg-mck-red mt-1.5" />
-                <div>
-                  <p className="text-sm font-bold text-mck-red">{issue.title}</p>
-                  <p className="text-xs text-mck-navy/70">{issue.description}</p>
-                  <p className="text-[10px] font-mono mt-1 text-mck-navy/40">依据：{issue.lawReference}</p>
-                </div>
-              </div>
-            )) : (
-              <p className="text-xs text-mck-navy/40 italic">暂未发现合规风险</p>
-            )}
+        {/* Main Content: Editor + Preview */}
+        <div className="flex-1 flex gap-4 min-w-0">
+          {/* Editor */}
+          <div className="flex-1 mck-card overflow-hidden">
+            {renderEditor()}
+          </div>
+
+          {/* Preview */}
+          <div className="flex-1 mck-card overflow-hidden">
+            {renderPreview()}
           </div>
         </div>
       </div>

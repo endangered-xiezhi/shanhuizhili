@@ -1,5 +1,5 @@
 import React from "react";
-import { LayoutDashboard, Mic, FileText, ShieldCheck, Settings, Users, Calendar, Book } from "lucide-react";
+import { LayoutDashboard, FileText, ShieldCheck, Settings, Users, Calendar, Book } from "lucide-react";
 import { cn } from "@/src/lib/utils";
 
 interface SidebarProps {
@@ -10,10 +10,10 @@ interface SidebarProps {
 const navItems = [
   { id: "dashboard", label: "全局控制台", icon: LayoutDashboard },
   { id: "meetings", label: "会议管理", icon: Calendar },
-  { id: "recording", label: "智能录音", icon: Mic },
+  { id: "recording", label: "会议纪要", icon: FileText },
   { id: "compliance", label: "合规审查", icon: ShieldCheck },
   { id: "documents", label: "文书中心", icon: FileText },
-  { id: "knowledge", label: "法律文件库", icon: Book },
+  { id: "knowledge", label: "RAG知识库", icon: Book },
   { id: "users", label: "人员矩阵", icon: Users },
 ];
 
