@@ -27,7 +27,7 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "tailwind-merge": "^3.5.0",
-    "tencentcloud-sdk-nodejs": "^4.0.11",
+    "tencentcloud-sdk-nodejs": "^4.1.211",
     "tencentcloud-sdk-nodejs-asr": "^1.0.0",
     "vite": "^6.2.0"
   },

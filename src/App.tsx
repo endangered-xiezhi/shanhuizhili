@@ -81,7 +81,7 @@ export default function App() {
 
         {/* Content Area */}
         <div className="p-8 flex-1 overflow-y-auto">
-          {activeTab === "dashboard" && <Dashboard />}
+          {activeTab === "dashboard" && <Dashboard onNavigate={setActiveTab} />}
           {activeTab === "meetings" && (
             <MeetingManager onStartMeeting={handleStartMeeting} />
           )}
