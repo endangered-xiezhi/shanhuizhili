@@ -1,0 +1,76 @@
+name: Feature Request
+description: 提出新功能建议
+title: "[FEAT] <功能标题>"
+labels: ["enhancement"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 功能描述
+        请详细描述您希望添加的功能。
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 功能描述
+      description: 清晰地描述这个功能的用途和价值
+      placeholder: |
+        作为一个[用户角色]
+        我想要[功能描述]
+        以便于[实现的价值]
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: 使用场景
+      description: 描述这个功能的使用场景
+      placeholder: 用户在什么情况下会使用这个功能？
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: 验收标准
+      description: 列出功能完成的标准
+      placeholder: |
+        - [ ] 功能点1
+        - [ ] 功能点2
+        - [ ] 功能点3
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 优先级
+      description: 选择功能的优先级
+      options:
+        - P0 - 必须完成
+        - P1 - 重要
+        - P2 - 一般
+        - P3 - 可选
+      default: P1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: assignee
+    attributes:
+      label: 预计开发者
+      description: 预计由谁来开发这个功能
+      options:
+        - 同学 A (负责人)
+        - 同学 B (前端)
+        - 同学 C (后端)
+        - 同学 D (测试)
+      default: 未分配
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: 其他信息
+      description: 任何其他相关的信息、截图或参考链接

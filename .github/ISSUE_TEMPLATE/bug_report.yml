@@ -1,0 +1,111 @@
+name: Bug Report
+description: 报告项目中的 Bug
+title: "[BUG] <Bug 简短描述>"
+labels: ["bug"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Bug 报告
+        请详细描述遇到的问题，帮助我们更快地定位和修复。
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 清晰地描述 Bug 的现象
+      placeholder: |
+        当我[执行某操作]时，
+        发生了[什么错误/异常行为]，
+        期望[正确的行为]。
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: 复现步骤
+      description: 列出复现 Bug 的详细步骤
+      placeholder: |
+        1. 打开应用
+        2. 点击 "会议管理"
+        3. 点击 "发起新会议"
+        4. 观察到错误
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: 期望行为
+      description: 描述期望的正确行为
+      placeholder: 应该弹出新会议创建表单
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: 实际行为
+      description: 描述实际发生的行为
+      placeholder: 页面没有响应，控制台报错
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图/录屏
+      description: 如果有，请附上截图或录屏链接
+      placeholder: ![Bug 截图](url)
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境信息
+      description: 提供您的环境信息
+      placeholder: |
+        - 操作系统: [e.g. Windows 11 / macOS 14 / Ubuntu 22.04]
+        - 浏览器: [e.g. Chrome 120 / Firefox 121 / Safari 17]
+        - Node.js 版本: [e.g. v20.10.0]
+        - npm 版本: [e.g. 10.2.4]
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 错误日志
+      description: 如果有，请粘贴相关的错误日志
+      render: shell
+      placeholder: |
+        Uncaught TypeError: Cannot read properties of null (reading 'getBoundingClientRect')
+          at RecordingWorkspace.tsx:54
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 严重程度
+      description: 选择 Bug 的严重程度
+      options:
+        - Critical - 系统崩溃，无法使用
+        - High - 核心功能不可用
+        - Medium - 功能异常但有替代方案
+        - Low - 轻微问题，不影响使用
+      default: Medium
+    validations:
+      required: true
+
+  - type: dropdown
+    id: assignee
+    attributes:
+      label: 预计修复者
+      description: 预计由谁来修复这个 Bug
+      options:
+        - 同学 A (负责人)
+        - 同学 B (前端)
+        - 同学 C (后端)
+        - 同学 D (测试)
+      default: 未分配
